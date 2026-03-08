@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chronos Sphere - 空間歴史アーカイブ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.jsの読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Quicksand:wght@300;400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.15);
+            --glass-highlight: rgba(255, 255, 255, 0.25);
+            --text-main: #f0f4f8;
+            --text-accent: #8bf;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #0f0f1a 100%);
+            color: var(--text-main);
+            font-family: 'Noto Sans JP', sans-serif;
+            /* 3D空間感を出すためのパースペクティブ */
+            perspective: 1200px; 
+        }
+
+        .en-font {
+            font-family: 'Quicksand', sans-serif;
+        }
+
+        /* Three.js用キャンバスコンテナ */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            pointer-events: none; /* UI操作の邪魔をしない */
+        }
+
+        /* グラスモーフィズム共通クラス */
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: 2rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255,255,255,0.1);
+        }
+
+        /* UIレイヤー */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            pointer-events: none; /* 親はイベントを通す */
+        }
+        
+        #ui-layer > * {
+            pointer-events: auto; /* 子要素はイベントを受け取る */
+        }
+
+        /* 質問と選択肢を包むコンテナ */
+        .quiz-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            opacity: 0;
+            transition: all 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+        
+        .quiz-container.active {
+            opacity: 1;
+        }
+
+        .quiz-container.exit {
+            opacity: 0;
+            transform: translate(-50%, -50%) scale(0.9) translateZ(-100px);
+        }
+
+        /* 中央の問題パネル */
+        .question-card {
+            padding: 2.5rem 3rem;
+            text-align: center;
+        }
+
+        /* 選択肢グリッド */
+        .options-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+        @media (min-width: 768px) {
+            .options-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        /* 洗練された選択肢ボタン */
+        .option-btn {
+            padding: 1.5rem 2rem;
+            border-radius: 1.5rem;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            font-size: 1.1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            opacity: 0;
+            transform: translateY(20px);
+            /* 視認性を高めるためのテキストシャドウ */
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5); 
+        }
+
+        .option-btn.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .option-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 10px 25px rgba(136, 187, 255, 0.3);
+        }
+
+        .option-btn.selected {
+            background: rgba(136, 187, 255, 0.85);
+            color: #000;
+            text-shadow: none;
+            border-color: #fff;
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(136, 187, 255, 0.5);
+            z-index: 10;
+        }
+        
+        .option-btn.fade-out {
+            opacity: 0.3;
+            transform: scale(0.95);
+            pointer-events: none;
+        }
+
+        /* 解説モーダル */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.6s ease;
+            z-index: 200;
+        }
+        
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .explanation-card {
+            width: 90%;
+            max-width: 500px;
+            padding: 3rem;
+            transform: translateY(30px) scale(0.95);
+            transition: all 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+            text-align: center;
+        }
+
+        .modal-overlay.active .explanation-card {
+            transform: translateY(0) scale(1);
+        }
+
+        .badge-correct { background: rgba(46, 213, 115, 0.2); color: #2ed573; border: 1px solid rgba(46, 213, 115, 0.4); }
+        .badge-incorrect { background: rgba(255, 71, 87, 0.2); color: #ff4757; border: 1px solid rgba(255, 71, 87, 0.4); }
+
+        .btn-modern {
+            background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 999px;
+            padding: 0.75rem 2rem;
+            color: #fff;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-modern:hover {
+            background: rgba(255,255,255,0.15);
+            border-color: rgba(255,255,255,0.4);
+            transform: translateY(-2px);
+        }
+
+        /* 隠しクラス */
+        .hidden-el { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <!-- 3D背景 -->
+    <div id="canvas-container"></div>
+
+    <!-- UI全体 -->
+    <div id="ui-layer">
+        
+        <!-- ヘッダー情報 -->
+        <div class="absolute top-6 left-8 right-8 flex justify-between items-center z-20">
+            <div class="glass-panel px-6 py-2 flex items-center gap-3">
+                <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                <span class="en-font text-sm tracking-widest text-blue-200">PROGRESS</span>
+                <span id="progressText" class="en-font font-bold">0 / 0</span>
+            </div>
+            <div class="glass-panel px-6 py-2 flex items-center gap-3">
+                <span class="en-font text-sm tracking-widest text-purple-200">SCORE</span>
+                <span id="scoreText" class="en-font font-bold text-lg">0</span>
+            </div>
+        </div>
+
+        <!-- スタート画面 -->
+        <div id="startScreen" class="absolute inset-0 flex flex-col items-center justify-center z-50">
+            <div class="glass-panel p-10 flex flex-col items-center max-w-lg w-11/12">
+                <div class="w-16 h-16 rounded-full border border-white/20 flex items-center justify-center mb-6">
+                    <svg class="w-8 h-8 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </div>
+                <h1 class="en-font text-3xl font-light tracking-widest mb-2">CHRONOS SPHERE</h1>
+                <p class="text-sm text-gray-400 mb-8 tracking-wider">歴史アーカイブ・空間プロトコル</p>
+                <button onclick="startGame()" class="btn-modern en-font tracking-widest">ENTER ARCHIVE</button>
+            </div>
+        </div>
+
+        <!-- 質問表示コンテナ -->
+        <div id="questionContainer" class="hidden-el w-full h-full relative z-30">
+            
+            <div id="quizContent" class="quiz-container">
+                <!-- 中央HUD（問題文） -->
+                <div class="glass-panel question-card">
+                    <h2 id="questionText" class="text-xl md:text-2xl font-medium leading-loose text-white/95" style="text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
+                        ここに問題が表示されます。
+                    </h2>
+                </div>
+
+                <!-- 動的選択肢が生成される場所 -->
+                <div id="optionsContainer" class="options-grid"></div>
+            </div>
+
+        </div>
+
+        <!-- 結果表示画面 -->
+        <div id="resultScreen" class="hidden-el absolute inset-0 flex flex-col items-center justify-center z-50">
+             <div class="glass-panel p-12 flex flex-col items-center max-w-lg w-11/12 text-center">
+                <h2 class="en-font text-2xl font-light tracking-widest text-blue-200 mb-6">ARCHIVE EXPLORATION COMPLETE</h2>
+                <div class="en-font text-7xl font-bold mb-8 bg-clip-text text-transparent bg-gradient-to-br from-blue-300 to-purple-400" id="finalScore">100%</div>
+                <p class="text-gray-300 mb-10 leading-relaxed font-light" id="finalMessage">完了メッセージ</p>
+                <button onclick="location.reload()" class="btn-modern en-font tracking-widest">RETURN TO ORIGIN</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 解説モーダル -->
+    <div id="explModal" class="modal-overlay">
+        <div class="glass-panel explanation-card">
+            <div id="resultBadge" class="inline-block px-4 py-1 rounded-full text-sm font-bold tracking-widest mb-6 en-font"></div>
+            <h3 class="text-xl font-medium mb-6 text-white/90" id="explAnswer">正解: ---</h3>
+            <div class="w-full h-px bg-gradient-to-r from-transparent via-white/20 to-transparent mb-6"></div>
+            <p id="explText" class="text-gray-300 leading-relaxed mb-8 text-left font-light text-sm md:text-base">
+                ここに解説が表示されます。
+            </p>
+            <button onclick="nextQuestion()" class="btn-modern en-font tracking-wider">CONTINUE</button>
+        </div>
+    </div>
+
+    <script>
+        /* -----------------------------------------------------------------
+           Three.js バックグラウンドアニメーション (3D空間の構築)
+        ----------------------------------------------------------------- */
+        let scene, camera, renderer, orbs = [];
+
+        function init3DBackground() {
+            const container = document.getElementById('canvas-container');
+            
+            // シーン設定
+            scene = new THREE.Scene();
+            
+            // カメラ設定
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 30;
+
+            // レンダラー設定
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // 照明
+            const ambientLight = new THREE.AmbientLight(0x404050, 2);
+            scene.add(ambientLight);
+
+            const pointLight1 = new THREE.PointLight(0x88bbff, 3, 100);
+            pointLight1.position.set(10, 10, 10);
+            scene.add(pointLight1);
+
+            const pointLight2 = new THREE.PointLight(0xaa66ff, 3, 100);
+            pointLight2.position.set(-10, -10, 10);
+            scene.add(pointLight2);
+
+            // 有機的な3Dオブジェクト（Icosahedronにスムージングをかけて球体っぽく）
+            const geometry = new THREE.IcosahedronGeometry(1, 4);
+            
+            // マテリアル（ガラスのような質感）
+            const material = new THREE.MeshPhysicalMaterial({
+                color: 0xffffff,
+                metalness: 0.1,
+                roughness: 0.1,
+                transmission: 0.9, // ガラスのような透過
+                thickness: 0.5,
+                wireframe: true, // ワイヤーフレームで少しデジタル感を残す
+                transparent: true,
+                opacity: 0.15
+            });
+
+            // 複数のオーブを空間に配置
+            for (let i = 0; i < 15; i++) {
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                // ランダムな位置
+                mesh.position.x = (Math.random() - 0.5) * 60;
+                mesh.position.y = (Math.random() - 0.5) * 40;
+                mesh.position.z = (Math.random() - 0.5) * 40 - 10;
+                
+                // ランダムなスケール
+                const scale = Math.random() * 3 + 1;
+                mesh.scale.set(scale, scale, scale);
+                
+                // 個別の回転速度や移動ベクトルを保持
+                mesh.userData = {
+                    rx: (Math.random() - 0.5) * 0.01,
+                    ry: (Math.random() - 0.5) * 0.01,
+                    tx: (Math.random() - 0.5) * 0.02,
+                    ty: (Math.random() - 0.5) * 0.02,
+                    originX: mesh.position.x,
+                    originY: mesh.position.y,
+                    time: Math.random() * 100
+                };
+                
+                scene.add(mesh);
+                orbs.push(mesh);
+            }
+
+            // 大きな背景用オブジェクト（ゆっくり変形して見えるよう回転）
+            const bgGeo = new THREE.TorusKnotGeometry(15, 3, 100, 16);
+            const bgMat = new THREE.MeshBasicMaterial({ color: 0x4466aa, wireframe: true, transparent: true, opacity: 0.03 });
+            const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+            bgMesh.position.z = -30;
+            scene.add(bgMesh);
+            
+            orbs.push(bgMesh); // 回転用に追加
+
+            // リサイズ対応
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            animate3D();
+        }
+
+        function animate3D() {
+            requestAnimationFrame(animate3D);
+
+            orbs.forEach(orb => {
+                // 回転
+                if (orb.userData.rx) orb.rotation.x += orb.userData.rx;
+                if (orb.userData.ry) orb.rotation.y += orb.userData.ry;
+                
+                // ふわふわとしたサイン波の移動
+                if (orb.userData.time !== undefined) {
+                    orb.userData.time += 0.01;
+                    orb.position.x = orb.userData.originX + Math.sin(orb.userData.time * 0.5) * 2;
+                    orb.position.y = orb.userData.originY + Math.cos(orb.userData.time * 0.3) * 2;
+                } else {
+                    // 背景のTorusKnot用
+                    orb.rotation.z -= 0.001;
+                    orb.rotation.x += 0.0005;
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // ページ読み込み時に3D初期化
+        window.addEventListener('load', init3DBackground);
+
+        /* -----------------------------------------------------------------
+           クイズデータとロジック (データは前回と同じ厳選30問)
+        ----------------------------------------------------------------- */
+        const quizData = [
+            { q: "ルネサンスが起こるきっかけの一つとなった、14世紀にヨーロッパの人口の約30%を奪った病気は何ですか？", c: "黒死病（ペスト）", w: ["コレラ", "天然痘", "スペイン風邪"], e: "ペストの流行により多くの命が失われ、「人間が生きる意味は何か？」を問い直す契機となり、ルネサンス（人間中心主義）へと繋がりました。" },
+            { q: "ルネサンスの中心地フィレンツェで、芸術家たちを保護した大富豪の一族はどれですか？", c: "メディチ家", w: ["ハプスブルク家", "ブルボン家", "ロマノフ家"], e: "メディチ家は銀行業で巨万の富を築き、ダ・ヴィンチやミケランジェロなど多くの芸術家をパトロンとして支援しました。" },
+            { q: "中世の神中心の価値観を批判し、古代文化を再生して人間賛美を探求したルネサンスの中心思想は？", c: "人文主義（ヒューマニズム）", w: ["啓蒙主義", "重商主義", "ロマン主義"], e: "神を絶対とする中世の価値観から離れ、古代ギリシア・ローマの文献を研究して「人間のありのままの姿」を肯定しようとする思想です。" },
+            { q: "『春』や『ヴィーナスの誕生』などの作品で、近代の写実主義へ道を開いた画家は誰ですか？", c: "ボッティチェリ", w: ["ラファエロ", "ダ・ヴィンチ", "ミケランジェロ"], e: "ボッティチェリはメディチ家の保護の下、神話の世界を優美に描き出しました。" },
+            { q: "権力を宗教から独立して捉え、近代政治学の原型となった『君主論』の著者は誰ですか？", c: "マキャヴェリ", w: ["トマス・モア", "ダンテ", "エラスムス"], e: "マキャヴェリは、君主には「獅子の勇猛」と「狐の狡猾さ」が必要だと説き、政治を宗教や道徳から切り離しました。" },
+            { q: "キリスト教の天国とは別の理想郷を描き、当時のイギリス社会を風刺した『ユートピア』の著者は？", c: "トマス・モア", w: ["ダンテ", "シェイクスピア", "ボッカチオ"], e: "トマス・モアは「羊が人間を食い殺している」と当時の囲い込み（エンクロージャー）を批判し、『ユートピア（どこにも無い場所）』を描きました。" },
+            { q: "大量の印刷物流通を可能にし、ルネサンスや宗教改革の広まりに大きく貢献した技術を改良した人物は？", c: "グーテンベルク", w: ["ガリレオ", "コペルニクス", "ニュートン"], e: "活版印刷術の改良により、聖書やルターの論文が安価で大量に出回るようになり、情報革命を引き起こしました。" },
+            { q: "16世紀、教皇レオ10世がサン＝ピエトロ大聖堂の改築費を集めるために販売したものは何ですか？", c: "贖宥状（免罪符）", w: ["十分の一税", "聖遺物", "踏絵"], e: "「これを買えば罪が許され天国に行ける」として販売された贖宥状に対し、ルターが激しく抗議しました。" },
+            { q: "1517年、贖宥状の販売を批判して「九十五カ条の論題」を発表し、宗教改革を始めた人物は？", c: "ルター", w: ["カルヴァン", "ツヴィングリ", "ミュンツァー"], e: "ドイツの神学者ルターは、人間は信仰によってのみ救われる（信仰義認説）と主張しました。" },
+            { q: "「神は誰が救われるかを予め決めている」とする、カルヴァンが唱えた説は何ですか？", c: "予定説", w: ["信仰義認説", "万人祭司主義", "福音主義"], e: "カルヴァンの「予定説」は、救われる不安から逃れるために人々を禁欲的な労働（天職）へ駆り立て、資本主義の精神的支柱となりました。" },
+            { q: "宗教改革に対抗するため、カトリック教会側が世界布教を目指して結成した組織は？", c: "イエズス会", w: ["フランシスコ会", "ドミニコ会", "テンプル騎士団"], e: "イグナティウス・ロヨラやフランシスコ・ザビエルらが結成し、厳格な規律のもと、アジアやラテンアメリカへ布教を行いました。" },
+            { q: "ヨーロッパ人が大航海時代にアジアを目指した最大の目的は、何を直接手に入れることでしたか？", c: "香辛料（胡椒など）", w: ["絹織物", "陶磁器", "奴隷"], e: "肉の保存や味付けに不可欠だった香辛料は、オスマン帝国を仲介すると高価だったため、直接インドへ向かう海路が求められました。" },
+            { q: "1492年、スペインの支援を受け、大西洋を西に進んで西インド諸島に到達した人物は？", c: "コロンブス", w: ["マゼラン", "ヴァスコ・ダ・ガマ", "カブラル"], e: "地球球体説を信じて西へ向かったコロンブスは、到着した場所を「インド」だと信じ込んでいました。" },
+            { q: "新大陸がアジアではなく新しい大陸であることを確認し、「アメリカ」の語源となった人物は？", c: "アメリゴ・ヴェスプッチ", w: ["コロンブス", "マゼラン", "ピサロ"], e: "彼の名前「アメリゴ」のラテン語名から、新大陸は「アメリカ」と呼ばれるようになりました。" },
+            { q: "1522年、史上初の世界一周を成し遂げた船隊を率いていたのは誰ですか？", c: "マゼラン", w: ["コロンブス", "ドレーク", "クック"], e: "マゼラン自身はフィリピンで現地の首長ラプ＝ラプとの戦いで戦死しましたが、部下が航海を続け、地球が丸いことを実証しました。" },
+            { q: "メキシコ高原で繁栄していたアステカ帝国を滅ぼしたスペインの征服者（コンキスタドール）は？", c: "コルテス", w: ["ピサロ", "ラス・カサス", "カブラル"], e: "コルテスは銃器や馬に加え、現地の内紛や神話（白い神の帰還）を利用し、少数の兵力で巨大帝国を滅ぼしました。" },
+            { q: "旧大陸と新大陸の間で、農作物や家畜、病気などが交換された出来事を何と呼びますか？", c: "コロンブス交換", w: ["商業革命", "価格革命", "三角貿易"], e: "新大陸からはジャガイモやトマト、トウモロコシが、旧大陸からは馬やサトウキビ、そして天然痘などの病気がもたらされました。" },
+            { q: "江戸時代の政治は、武力で抑え込む武断政治から、儒教などの教えに基づく何政治へ転換しましたか？", c: "文治政治", w: ["専制政治", "重商政治", "立憲政治"], e: "戦闘者の侍を「儒教官僚」に変えることで、軍事体制を凍結させ、長期的な安定（泰平）を生み出しました。" },
+            { q: "1635年に武家諸法度に追加された、大名に江戸と領地を定期的に往復させる制度は？", c: "参勤交代", w: ["刀狩", "人掃令", "検地"], e: "大名に莫大な費用を使わせることで、幕府に反抗する軍資金を蓄えさせない（経済的弱体化）狙いがありました。" },
+            { q: "江戸幕府が大名を統制するために出し、城の無断修築などを禁じた法度は何ですか？", c: "武家諸法度", w: ["禁中並公家諸法度", "御成敗式目", "公事方御定書"], e: "違反した大名は、領地を取り上げられる「改易」などの厳しい処罰を受けました。" },
+            { q: "すべての民衆を仏教寺院に所属させ、キリスト教徒でないことを証明させた制度は？", c: "寺請制度", w: ["絵踏", "宗門改", "五人組"], e: "キリスト教禁教の目的で始まりましたが、結果的に現代の戸籍や身分証明書のような行政機能を持つようになりました。" },
+            { q: "幕府がキリシタンを見つけ出すために、キリストやマリアの像を踏ませた制度（行為）を何と呼びますか？", c: "絵踏", w: ["踏絵", "寺請制度", "宗門改"], e: "行為そのものを「絵踏」、踏ませるために使われた板や像のモノ自体を「踏絵」と呼びます。" },
+            { q: "「鎖国」体制下において、幕府が長崎の出島で貿易を許可していたヨーロッパの国はどこですか？", c: "オランダ", w: ["ポルトガル", "スペイン", "イギリス"], e: "オランダはキリスト教の布教を行わず、貿易のみを目的とすることを約束したため、例外的に許可されました。" },
+            { q: "朝鮮から将軍の代替わりごとに日本へ派遣された使節を何と呼びますか？", c: "通信使", w: ["慶賀使", "遣唐使", "遣隋使"], e: "対馬藩を通じて行われ、豊臣秀吉の朝鮮出兵で途絶えた国交を修復し、親善を深める目的がありました。" },
+            { q: "大航海時代の背景として、イベリア半島で高まっていたイスラム勢力からの領土奪回運動を何と呼ぶ？", c: "レコンキスタ（国土回復運動）", w: ["十字軍", "ルネサンス", "宗教改革"], e: "スペインとポルトガルは、この運動の情勢のまま海へ乗り出し、キリスト教の布教と領土拡大を目指しました。" },
+            { q: "エンコミエンダ制による先住民に対する残酷な支配を告発した修道士は誰ですか？", c: "ラス・カサス", w: ["ロヨラ", "ザビエル", "トマス・モア"], e: "ラス・カサスは著書『インディアスの破壊についての簡潔な報告』でスペインの残虐行為をスペイン国王に訴えました。" },
+            { q: "1615年、江戸幕府が天皇や公家の行動を統制するために定めた法度は何ですか？", c: "禁中並公家諸法度", w: ["武家諸法度", "公事方御定書", "十七条の憲法"], e: "「天子諸芸能ノ事、第一御学問也」とし、天皇や公家から政治権力を奪い、学問や儀式に専念させました。" },
+            { q: "「太平の眠りを覚ます 上喜撰 たった四杯で夜も寝られず」と詠まれた、1853年の出来事は？", c: "ペリー来航", w: ["島原の乱", "黒船来航", "大政奉還"], e: "「上喜撰（高級な茶）」を「蒸気船」にかけ、たった4隻の黒船で幕府が大慌てしている様子を皮肉った狂歌です。" },
+            { q: "ペリー来航により、江戸幕府が朝廷や大名に意見を求めた結果、崩壊に向かったのはなぜですか？", c: "幕府自らが「将軍に代わる権力」の政治参加を許してしまったから", w: ["武士の給料が払えなくなったから", "農民の反乱が全国で起きたから", "外国の軍隊に江戸を占領されたから"], e: "独裁権力であった幕府が自ら他者の意見を聞いたことで、「身分秩序の凍結」が解け（解氷）、自滅へ向かいました。" },
+            { q: "日本の中世から近世への移行期において、農民の武装を解除し「下剋上」を防ごうとした政策は？", c: "刀狩", w: ["太閤検地", "参勤交代", "兵農分離"], e: "豊臣秀吉が行い、武器を奪うことで農民を一揆から遠ざけ、農業に専念させると同時に身分を固定化しました。" }
+        ];
+
+        let currentQuestions = [];
+        let currentQIndex = 0;
+        let score = 0;
+        let isWaitingNext = false;
+
+        function shuffleArray(array) {
+            const arr = [...array];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        function startGame() {
+            document.getElementById('startScreen').classList.add('hidden-el');
+            document.getElementById('questionContainer').classList.remove('hidden-el');
+            
+            currentQuestions = shuffleArray(quizData);
+            currentQIndex = 0;
+            score = 0;
+            updateScore();
+            
+            loadQuestion();
+        }
+
+        function loadQuestion() {
+            isWaitingNext = false;
+            document.getElementById('progressText').innerText = `${currentQIndex + 1} / ${currentQuestions.length}`;
+            
+            const qData = currentQuestions[currentQIndex];
+            const quizContent = document.getElementById('quizContent');
+            
+            // HUDアニメーション（リセットして再表示）
+            quizContent.classList.remove('active', 'exit');
+            void quizContent.offsetWidth; // リフロー強制
+            quizContent.classList.add('active');
+            
+            document.getElementById('questionText').innerText = qData.q;
+
+            // 選択肢の生成
+            const optionsContainer = document.getElementById('optionsContainer');
+            optionsContainer.innerHTML = '';
+            
+            const choices = shuffleArray([qData.c, ...qData.w]);
+
+            choices.forEach((choiceText, index) => {
+                const btn = document.createElement('button');
+                btn.className = 'option-btn';
+                btn.innerText = choiceText;
+                
+                btn.onclick = () => selectOption(btn, choiceText, qData.c, qData.e);
+                
+                optionsContainer.appendChild(btn);
+
+                // 順番にフワッと浮かび上がるアニメーション
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        btn.classList.add('show');
+                    }, 100 + (index * 150));
+                });
+            });
+        }
+
+        function selectOption(clickedBtn, selectedText, correctText, explanation) {
+            if (isWaitingNext) return;
+            isWaitingNext = true;
+
+            const isCorrect = (selectedText === correctText);
+            
+            // 他のボタンを薄くする
+            const allBtns = document.querySelectorAll('.option-btn');
+            allBtns.forEach(btn => {
+                if (btn !== clickedBtn) {
+                    btn.classList.add('fade-out');
+                }
+            });
+
+            // クリックしたボタンを強調
+            clickedBtn.classList.add('selected');
+
+            // 全体を奥へ退場させる
+            setTimeout(() => {
+                document.getElementById('quizContent').classList.remove('active');
+                document.getElementById('quizContent').classList.add('exit');
+            }, 600);
+
+            // モーダル表示
+            setTimeout(() => {
+                showExplanation(isCorrect, correctText, explanation);
+                if (isCorrect) {
+                    score++;
+                    updateScore();
+                }
+            }, 1000);
+        }
+
+        function showExplanation(isCorrect, correctText, explanation) {
+            const modal = document.getElementById('explModal');
+            const badge = document.getElementById('resultBadge');
+            const explAnswer = document.getElementById('explAnswer');
+            const explText = document.getElementById('explText');
+
+            if (isCorrect) {
+                badge.innerText = "MATCH";
+                badge.className = "inline-block px-4 py-1 rounded-full text-sm font-bold tracking-widest mb-6 en-font badge-correct";
+            } else {
+                badge.innerText = "ERROR";
+                badge.className = "inline-block px-4 py-1 rounded-full text-sm font-bold tracking-widest mb-6 en-font badge-incorrect";
+            }
+
+            explAnswer.innerText = `CORRECT: ${correctText}`;
+            explText.innerText = explanation;
+
+            modal.classList.add('active');
+        }
+
+        function nextQuestion() {
+            document.getElementById('explModal').classList.remove('active');
+            
+            // 選択されたボタンを消す
+            const selectedBtn = document.querySelector('.floating-option.selected');
+            if(selectedBtn) {
+                selectedBtn.style.opacity = '0';
+                selectedBtn.style.transform = 'translate(-50%, -50%) scale(0.5) !important';
+            }
+
+            currentQIndex++;
+            if (currentQIndex < currentQuestions.length) {
+                setTimeout(() => loadQuestion(), 500);
+            } else {
+                setTimeout(() => showResult(), 500);
+            }
+        }
+
+        function updateScore() {
+            document.getElementById('scoreText').innerText = score;
+        }
+
+        function showResult() {
+            document.getElementById('questionContainer').classList.add('hidden-el');
+            const resultScreen = document.getElementById('resultScreen');
+            const percentage = Math.round((score / currentQuestions.length) * 100);
+            
+            document.getElementById('finalScore').innerText = `${percentage}%`;
+            
+            let msg = "";
+            if (percentage === 100) msg = "完璧なデータ照合です。空間内の全歴史アーカイブが解放されました。";
+            else if (percentage >= 80) msg = "良好なアクセスです。大部分のデータ復元に成功しました。";
+            else if (percentage >= 50) msg = "部分的なデータ復元。さらなる探索が推奨されます。";
+            else msg = "照合失敗。アーカイブへのアクセス権限が制限されています。";
+            
+            document.getElementById('finalMessage').innerText = msg;
+            resultScreen.classList.remove('hidden-el');
+        }
+    </script>
+</body>
+</html>
